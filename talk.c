@@ -9,7 +9,7 @@
 #include<assert.h>
 #include<stdlib.h>
 
-const int MaxFileLen = 10;
+static const int MaxFileLen = 10;
 
 char *debug;
 
@@ -30,8 +30,8 @@ static struct Node *NewNode(int _type, char *_filename, char *_contents, struct 
 	memset(ptr, 0, sizeof(struct Node));
 
 	ptr -> type = _type;
-	ptr -> filename = _filename;
-	ptr -> contents = _contents;
+	ptr -> filename = strdup(_filename);
+	ptr -> contents = strdup(_contents);
 	ptr -> nxt = _nxt;
 	ptr -> pre = _pre;
 	ptr -> son = _son;
@@ -71,7 +71,8 @@ static int Find(const char *path, struct Node **nd) {
 		char name[MaxFileLen];
 		int len = 0;
 		while(path[pos] != '\0' && path[pos] != '/')
-			name[len ++] = path[pos];
+			name[len ++] = path[pos ++];
+		name[len] = '\0';
 		int type = path[pos] == '/' ? ++ pos, 2 : 0;
 		if(p -> son == NULL)
 			return -ENOENT;
@@ -160,13 +161,14 @@ static int ChatAccess(const char *path, int mask) {
 	return 0;
 }
 
+/*
 static int ChatWrite(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *info) {
 	(void) info;
 	int len = strlen(path), user1len = 0, user2len = 0, envilen = 0, pos = len;
 	char user1[MaxFileLen], user2[MaxFileLen];
 	char *envi = (char *)malloc(len + 1);
 
-	if(path[len - 1] != '/')
+	if(path[len - 1] == '/')
 		return -ENOENT;
 
 	for(; pos && path[pos - 1] != '/'; -- pos);
@@ -215,6 +217,93 @@ static int ChatWrite(const char *path, const char *buf, size_t size, off_t offse
 	
 	strcat(debug, strdup(title));
 	strcat(debug, "\n");
+	
+	int ns = 0;
+	if(offset + tlen + size > strlen(old))
+		ns = offset + tlen + size;
+	else
+		ns = strlen(old);
+	
+	char *newcontents = (char *)malloc(ns + 1);
+	memcpy(newcontents, old, strlen(old));
+	memcpy(newcontents + offset, title, tlen);
+	memcpy(newcontents + offset + tlen, buf, size);
+	newcontents[ns] = '\0';
+
+	us1 -> contents = newcontents;
+	us2 -> contents = strdup(newcontents);
+
+	return size;
+}
+*/
+
+static int ChatWrite(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *info) {
+	(void) info;
+	int len = strlen(path), user1len = 0, user2len = 0, envilen = 0, pos1 = len, pos2 = 1;
+	char user1[MaxFileLen], user2[MaxFileLen];
+	char *envi = (char *)malloc(len + 1);
+
+	if(path[len - 1] == '/')
+		return -ENOENT;
+
+	for(; pos1 && path[pos1 - 1] != '/'; -- pos1);
+	if(!pos1)
+		return -ENOENT;
+	for(; pos1 + user1len < len; ++ user1len)
+		user1[user1len] = path[pos1 + user1len];
+	user1[user1len] = '\0';
+
+	for(; pos2 < len && path[pos2] != '/'; ++ pos2);
+	if(pos2 >= len)
+		return -ENOENT;
+	for(; user2len + 1 < pos2; ++ user2len)
+		user2[user2len] = path[user2len + 1];
+	user2[user2len] = '\0';
+
+	for(int i = pos2 + 1; i < pos1; ++ envilen, ++ i)
+		envi[envilen] = path[i];
+	
+	char *path1 = (char *)malloc(len + 1);
+	char *path2 = (char *)malloc(len + 1);
+	memcpy(path1, path, len);
+	path1[len] = '\0';
+	path2[0] = '/';
+	for(int i = 0; i < user1len; ++ i)
+		path2[i + 1] = user1[i];
+	path2[user1len + 1] = '/';
+	for(int i = 0; i < envilen; ++ i)
+		path2[user1len + i + 2] = envi[i];
+	for(int i = 0; i < user2len; ++ i)
+		path2[envilen + user1len + i + 2] = user2[i];
+	path2[len] = '\0';
+
+	// strcat(debug, strdup(path));
+	// strcat(debug, "\n");
+	// strcat(debug, strdup(user1));
+	// strcat(debug, "\n");
+	// strcat(debug, strdup(user2));
+	// strcat(debug, "\n");
+	// strcat(debug, strdup(path1));
+	// strcat(debug, "\n");
+	// strcat(debug, strdup(path2));
+	// strcat(debug, "\n");
+
+	struct Node *us1, *us2;
+	if(Find(path1, &us1) != 0 || Find(path2, &us2) != 0)
+		return -ENOENT;
+	if(us1 -> type != 1 || us2 -> type != 1)
+		return -ENOENT;
+	
+	char *old = us1 -> contents;
+	int tlen = user2len + 3;
+	char *title = (char *)malloc(tlen + 1);
+	title[0] = '[';
+	for(int i = 0; i < user2len; ++ i)
+		title[i + 1] = user2[i];
+	title[tlen - 2] = ']', title[tlen - 1] = '\n', title[tlen] = '\0';
+	
+	// strcat(debug, strdup(title));
+	// strcat(debug, "\n");
 	
 	int ns = 0;
 	if(offset + tlen + size > strlen(old))
@@ -299,7 +388,7 @@ static int ChatMkdir(const char *path, mode_t mode) {
 	parpath[plen] = '\0';
 
 	struct Node *p;
-	if(Find(path, &p) != 0)
+	if(Find(parpath, &p) != 0)
 		return -ENOENT;
 	if(p -> type != 2)
 		return -ENOENT;
@@ -343,12 +432,10 @@ int main(int argc, char *argv[]) {
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 
 	root = NewNode(2, "/", "", NULL, NULL, NULL, NULL);
-	debug = (char *)malloc(2000);
-	debug[0] = 1, debug[1] = '\n';
 	log = NewNode(1, "log", "", NULL, NULL, NULL, NULL);
-	log -> contents = debug;
+	debug = (char *)malloc(1500);
 	Add(root, log);
-
+	log -> contents = debug;
 	ret = fuse_main(args.argc, args.argv, &chat_oper, NULL);
 
 	fuse_opt_free_args(&args);
